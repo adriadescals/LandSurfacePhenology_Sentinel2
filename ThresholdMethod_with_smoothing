@@ -1,0 +1,434 @@
+///////////////////////////////
+// Land Surface Estimation (LSP) with Sentinel-2 in the Arctic
+//
+// This is a demo code for the estimation of the start and end of season (SoS and EoS) with the threshold method with
+// time series smoothing (20-day composition and cubic interpolation).
+//
+// The LSP method is the threhsold method
+//
+// Adrià Descals - a.descals@creaf.uab.cat
+// CREAF - Centre de Recerca Ecològica i Aplicacions Forestals
+
+var textSections = '' +
+  "\n SECTION 1 - Define parameters and setup " +
+  "\n SECTION 2 - Define function for cubic interpolation " +
+  "\n SECTION 3 - Prepare Sentinel-2 data " +
+  "\n SECTION 4 - Generate composites  " +
+  "\n SECTION 5 - Increase window size for empty composites  " +
+  "\n SECTION 6 - Interpolate time series " +
+  "\n SECTION 7 - Estimate phenology metrics " +
+  "\n SECTION 8 - Plot results " +
+  "\n SECTION 9 - Display legends " 
+print(textSections)
+ 
+ 
+
+//_______________________________________________________________________________________________________________________
+// SECTION 1 - Define parameters and setup
+
+
+Map.setOptions('satellite')
+
+var geom = /* color: #ff0000 */ee.Geometry.Point([17.569432548114516, 67.81358919662131]);
+var point = geom // inspect results for this location
+var roi = point.buffer(100000).bounds() // display results around the point of interest
+
+var th = 0.5 // Define the percentage of amplitude for the estimation of the threshold 
+var threshMin = 0.4 // minimum NDVI value for the reclassification of snow values
+var scale = 50 // scale of the analysis
+var year1 = 2019 // year of processing
+
+var lag = 20 // temporal resolution of the composites
+
+var bioBandName = 'bio' // name of the vegetation index
+
+var startDate = year1+'-04-15'
+var endDate = year1+'-12-20'
+
+
+//_______________________________________________________________________________________________________________________
+// SECTION 2 - Define function for cubic interpolation
+
+var cubicInterpolation = function(collection,step){ 
+
+var listDekads = ee.List.sequence(1, collection.size().subtract(3), 1);
+
+var colInterp = listDekads.map(function(ii){
+
+  var ii = ee.Number(ii);
+  
+    var p0 = ee.Image(collection.toList(10000).get(ee.Number(ii).subtract(1)));
+    var p1 = ee.Image(collection.toList(10000).get(ii));
+    var p2 = ee.Image(collection.toList(10000).get(ee.Number(ii).add(1)));
+    var p3 = ee.Image(collection.toList(10000).get(ee.Number(ii).add(2)));
+  
+    var diff01 = ee.Date(p1.get('system:time_start')).difference(ee.Date(p0.get('system:time_start')), 'day');
+    var diff12 = ee.Date(p2.get('system:time_start')).difference(ee.Date(p1.get('system:time_start')), 'day');
+    var diff23 = ee.Date(p3.get('system:time_start')).difference(ee.Date(p2.get('system:time_start')), 'day');
+    
+    var diff01nor = diff01.divide(diff12);
+    var diff12nor = diff12.divide(diff12);
+    var diff23nor = diff23.divide(diff12);
+    
+    var f0 = p1;
+    var f1 = p2;
+    var f0p = (p2.subtract(p0)).divide(diff01nor.add(diff12nor));
+    var f1p = (p3.subtract(p1)).divide(diff12nor.add(diff23nor));
+  
+    var a = (f0.multiply(2)).subtract(f1.multiply(2)).add(f0p).add(f1p);
+    var b = (f0.multiply(-3)).add(f1.multiply(3)).subtract(f0p.multiply(2)).subtract(f1p);
+    var c = f0p;
+    var d = f0;
+    
+  /////////////
+  var xValues = ee.List.sequence(0,diff12.subtract(1),step); ////!!!!!!!!!!!!!!!
+  
+  var xDates = ee.List.sequence(p1.get('system:time_start'),p2.get('system:time_start'),86400000);
+  //print(xDates)
+  
+  var interp = (xValues.map(function(x){
+    var im = ee.Image(ee.Number(x).divide(diff12));
+    return (im.pow(3)).multiply(a).add((im.pow(2)).multiply(b)).add(im.multiply(c)).add(d)
+        .set('system:time_start',ee.Number(xDates.get(x)));
+    }));
+    
+   return interp 
+  })
+  
+  var colInterp = ee.ImageCollection(colInterp.flatten());
+  
+  return colInterp
+}
+
+ 
+ 
+
+
+
+
+
+
+//_______________________________________________________________________________________________________________________
+// SECTION 3 - Prepare Sentinel-2 data 
+
+//  Call Sentinel2 data.
+
+var S2 = ee.ImageCollection("COPERNICUS/S2_SR")
+  .filterDate(startDate,endDate)
+  .filterBounds(roi)
+  .filterMetadata('CLOUD_COVERAGE_ASSESSMENT','less_than',70)
+  .filterMetadata('SNOW_ICE_PERCENTAGE','less_than',90);
+
+// Mask non-valid observations and reclassify snow values
+var S2 = S2.map(function(im){
+
+    var SCL = im.select('SCL')
+    var SCLmask = SCL.eq(1).or(SCL.eq(4)).or(SCL.eq(5)).or(SCL.eq(11)) // mask for non-valid observations
+    var snowMask = SCL.eq(11) // snow mask
+    var ndvi = im.normalizedDifference(['B8','B4']).rename('nd_S2') // compute ndvi
+    var ndviMask = ndvi.lt(threshMin) 
+
+  return ndvi.rename(bioBandName)
+    .where(ndviMask,threshMin) // force values below 0.4
+    .where(snowMask,threshMin) // reclassify snow valies to 0.4
+    // .addBands(im.metadata('system:time_start','date1')) // add time band
+    .updateMask(SCLmask) // mask non-valid observations
+    .set('system:time_start', im.get('system:time_start'))
+});
+
+// plot time Sentinel-2 time series
+var chart1 = ui.Chart.image.series(S2, point, ee.Reducer.first(), scale)
+  .setOptions({title: 'Sentinel-2 NDVI', 
+              lineWidth: 0,
+              pointSize: 4})
+
+// print(chart1)
+
+
+
+
+
+
+
+
+//_______________________________________________________________________________________________________________________
+// SECTION 4 - Generate composites
+
+// Create the list of dates of the central day of the window
+var listDates = ee.List.sequence(ee.Date(startDate).millis(), ee.Date(endDate).millis(), 86400000*lag)
+
+// map the dates
+var colDekadsRaw = ee.ImageCollection(listDates.map(function(dd){
+  var date_window = ee.Date(ee.Number(dd)) // central day of the moving window
+
+  var date_startW = date_window.advance(-lag/2, 'days') // first day of the moving window
+  var date_endW = date_window.advance(lag/2, 'days') // last day of the moving window
+
+  var col_window = S2.filterDate(date_startW,date_endW) // filter the S2 collection for a period equal to lag
+
+  var out = col_window.reduce(ee.Reducer.mean()) // compute the average
+  
+return out
+    .set('system:time_start',date_window.millis()) // set time property
+    .set('empty', col_window.size().eq(0)) // flag dates without images
+    // .set('nobs',col_window.filterBounds(point).size())
+    // .set('date_start',date_start)
+    // .set('date_end',date_end)
+    // .set('date_window',ee.Date(date_window));
+}).flatten())
+
+// filter dates without images and fill them with the minimum NDVI value 
+var colDekadsEmpty = colDekadsRaw.filterMetadata('empty', 'equals', 1).map(function(im){
+ return ee.Image(threshMin).rename('bio_mean').copyProperties(im,['system:time_start'])
+})
+var colDekads = colDekadsRaw.filterMetadata('empty', 'equals', 0).merge(colDekadsEmpty)
+
+
+// plot composite 
+var chart1 = ui.Chart.image.series(colDekads.select('bio_mean'), point, ee.Reducer.first(), scale)
+  .setOptions({title: 'Moving average every '+lag+' days', 
+              lineWidth: 0,
+              pointSize: 4})
+
+// print(chart1)
+
+
+
+
+//_______________________________________________________________________________________________________________________
+// SECTION 5 - Increase window size for empty composites 
+
+
+var colDekads = colDekads.map(function(im){
+  
+  var date_window = ee.Date(im.get('system:time_start')) // central day of the window
+  var date_startW = date_window.advance(-lag*2, 'days') // first day of the window
+  var date_endW = date_window.advance(lag*2, 'days') // last day of the window
+
+  // make average with images before and after the central window
+  var meanIm1 = colDekads.filterDate(date_startW,date_window.advance(1, 'days')).reduce(ee.Reducer.mean())
+  var meanIm2 = colDekads.filterDate(date_window.advance(-1, 'days'),date_endW).reduce(ee.Reducer.mean())
+  var meanIm = (meanIm1.add(meanIm2)).divide(2)
+  
+ return im
+  .unmask(meanIm) // apply the gap-filling only to empty values
+  .copyProperties(im,['system:time_start'])
+})
+
+var colDekads = colDekads.sort('system:time_start')
+
+// plot gap-filled composites
+var chart1 = ui.Chart.image.series(colDekads, point, ee.Reducer.first(), scale)
+  .setOptions({title: 'Moving average gap-filled', 
+              lineWidth: 0,
+              pointSize: 4})
+
+// print(chart1)
+
+
+// FLAG PIXELS WITH NO VALID OBSERVATIONS
+var flagNoObs = colDekads.map(function(im){
+ return im.unmask(-999).eq(-999).copyProperties(im,['system:time_start'])
+}).filterDate('2019-05-01','2019-10-01').sum().eq(0).rename('flagNoObs')
+
+Map.addLayer(flagNoObs.clip(roi),{min:0,max:1},'Pixels with empty composites',false)
+
+
+
+//_______________________________________________________________________________________________________________________
+// SECTION 6 - Interpolate time series
+
+var interp = cubicInterpolation(colDekads,1)
+
+// Plot daily observations, composites, and interpolated values
+var chart1 = ui.Chart.image.series(S2.merge(colDekads.select(bioBandName+'_mean')).merge(interp), point, ee.Reducer.first(), 10)
+  .setOptions({
+      //title: 'States with Highest Record Temperatures',
+      vAxis: {
+        title: ' '
+      },
+  series: {
+    0: {color: '000000',lineWidth: 0, pointSize: 2},
+    1: {color: '00b8ff',lineWidth: 0, pointSize: 5},
+    2: {color: '19a700',lineWidth: 1, pointSize: 0}
+  } })
+
+// print(chart1)
+
+
+
+
+//_______________________________________________________________________________________________________________________
+// SECTION 7 - Estimate phenology metrics
+
+// Define doy = 0
+var init = ee.Image(ee.Date((year1-1)+'-12-31').millis());
+
+// add timeStamp band
+var interp = interp.map(function(im){
+  return im.rename(bioBandName+'_interp').addBands(im.metadata('system:time_start','date1'))
+    .set('system:time_start', im.get('system:time_start'))
+})
+
+// Estimate amplitude of time series
+var minND = ee.Image(threshMin)
+var maxND = colDekads.max()
+var amplitude = maxND.subtract(minND)
+
+// Compute threshold image
+var thresh = amplitude.multiply(th).add(minND).rename(bioBandName+'_interp')
+
+/////////
+// mask values below the threhsold
+var col_aboveThresh = interp.map(function(im){
+    var out = im.select(bioBandName+'_interp').gt(thresh);
+  return im.updateMask(out) // 
+    .copyProperties(im,['system:time_start'])
+})
+
+/////////
+// SoS (first day below the threhsold)
+var SoS = col_aboveThresh.reduce(ee.Reducer.firstNonNull()).select('date1_first').rename('SoS')
+var SoS_doy = SoS.subtract(init).divide(86400000); // convert to doy
+
+
+/////////
+// EoS (last day below the threhsold)
+var EoS = col_aboveThresh.reduce(ee.Reducer.lastNonNull()).select('date1_last').rename('EoS')
+var EoS_doy = EoS.subtract(init).divide(86400000); // convert to doy
+
+
+
+//_______________________________________________________________________________________________________________________
+// SECTION 8 - Plot results
+
+print('Threshold:',thresh.reduceRegion(ee.Reducer.first(), point, 1).get(bioBandName+'_interp'))
+print('SoS',ee.Date(SoS.reduceRegion(ee.Reducer.first(), point, 1).get('SoS')))
+print('EoS',ee.Date(EoS.reduceRegion(ee.Reducer.first(), point, 1).get('EoS')))
+
+var phenoPalette = ['ff0000','ff8d00','fbff00','4aff00','00ffe7','01b8ff','0036ff','fb00ff']
+var visSoS = {min:120,max:200,palette:phenoPalette}
+var visEoS = {min:200,max:300,palette:phenoPalette}
+Map.addLayer(SoS_doy.clip(roi),visSoS,'SoS',true)
+Map.addLayer(EoS_doy.clip(roi),visEoS,'EoS',false)
+
+var vPoly = ee.Image().toByte().paint(roi, 2,4);    
+Map.addLayer(vPoly, {palette: '000000', max: 3, opacity: 0.9}, 'Region of interest'); 
+Map.centerObject(roi,7)
+
+
+//////////////////////////////
+//PLOT GRAPH
+
+var SoSdict = SoS_doy.reduceRegion(ee.Reducer.first(), point, scale)
+var EoSdict = EoS_doy.reduceRegion(ee.Reducer.first(), point, scale)
+
+
+var blankImage1 = ee.Image(0).set('doy',SoSdict.get('SoS')).rename('SoS').int()
+  .set('system:time_start', ee.Date(year1+'-01-01').advance(ee.Number(SoSdict.get('SoS')),'day').millis())
+var blankImage2 = ee.Image(1).set('doy',ee.Number(SoSdict.get('SoS')).add(1)).rename('SoS').int()
+  .set('system:time_start', ee.Date(year1+'-01-01').advance(ee.Number(SoSdict.get('SoS')).add(1),'day').millis())
+var blankImage3 = ee.Image(0).set('doy',EoSdict.get('EoS')).rename('EoS').int()
+  .set('system:time_start', ee.Date(year1+'-01-01').advance(ee.Number(EoSdict.get('EoS')),'day').millis())
+var blankImage4 = ee.Image(1).set('doy',ee.Number(EoSdict.get('EoS')).add(1)).rename('EoS').int()
+  .set('system:time_start', ee.Date(year1+'-01-01').advance(ee.Number(EoSdict.get('EoS')).add(1),'day').millis())
+
+var lineSoS = ee.ImageCollection.fromImages([blankImage1,blankImage2])
+var lineEoS = ee.ImageCollection.fromImages([blankImage3,blankImage4])
+
+
+var resultsPanel = ui.Panel({style: {position: 'bottom-right',width: '500px'}});
+Map.add(resultsPanel);
+  
+var chart1 = ui.Chart.image.series({imageCollection: S2.merge(lineEoS).merge(lineSoS).merge(interp.select(bioBandName+'_interp')),
+  region: point,
+  reducer: ee.Reducer.first(), 
+  scale: scale,
+  // xProperty: 'doy'
+})
+.setOptions({title: 'Sentinel-2 NDVI', 
+      interpolateNulls: true,
+      series: {
+        0: {pointSize: 0, lineWidth: 3, color: '2800ff'}, // EoS
+        2: {pointSize: 2, lineWidth: 0, color: '000000'}, // L8
+        1: {pointSize: 0, lineWidth: 3, color: '3eff00'}, // SoS
+        3: {pointSize: 0, lineWidth: 2, color: 'f13030'}, // S2
+      },
+      vAxis: {
+      viewWindow: {
+          min: 0.38,
+          max: 0.8
+      }}})
+  // print(chart1)
+resultsPanel.clear().add(chart1);
+  
+
+//_______________________________________________________________________________________________________________________
+// SECTION 9 - Display legends
+
+function ColorBar() {
+  return ui.Thumbnail({
+    image: ee.Image.pixelLonLat().select(0),
+    params: {
+      bbox: [0, 0, 1, 0.1],
+      dimensions: '100x10',
+      format: 'png',
+      min: 0,
+      max: 1,
+      palette: phenoPalette,
+    },
+    style: {stretch: 'horizontal', margin: '0px 8px'},
+  });
+}
+
+function makeLegend(a,b) {
+  var labelPanel = ui.Panel(
+      [
+        ui.Label(a, {margin: '4px 8px'}),
+        ui.Label(' ',{margin: '4px 8px', textAlign: 'center', stretch: 'horizontal'}),
+        ui.Label(b, {margin: '4px 8px'})
+      ],
+      ui.Panel.Layout.flow('horizontal'));
+  return ui.Panel([ColorBar(), labelPanel]);
+}
+
+var LEGEND_TITLE_STYLE = {
+  fontSize: '20px',
+  fontWeight: 'bold',
+  stretch: 'horizontal',
+  textAlign: 'center',
+  margin: '4px',
+};
+
+var LEGEND_FOOTNOTE_STYLE = {
+  fontSize: '14px',
+  stretch: 'horizontal',
+  textAlign: 'center',
+  margin: '4px',
+};
+
+Map.add(ui.Panel(
+    [
+      ui.Label('End of Season', LEGEND_TITLE_STYLE), makeLegend(visEoS['min'],visEoS['max']),
+      ui.Label('(Day of Year)', LEGEND_FOOTNOTE_STYLE)
+    ],
+    ui.Panel.Layout.flow('vertical'),
+    {width: '230px', position: 'bottom-left'}));
+    
+Map.add(ui.Panel(
+    [
+      ui.Label('Start of Season', LEGEND_TITLE_STYLE), makeLegend(visSoS['min'],visSoS['max']),
+      ui.Label('(Day of Year)', LEGEND_FOOTNOTE_STYLE)
+    ],
+    ui.Panel.Layout.flow('vertical'),
+    {width: '230px', position: 'bottom-left'}));
+
+var titleLabel = ui.Label(
+    'SoS and EoS Sentinel-2 (2019) // Threshold method with time series smoothing', {fontWeight: 'bold', fontSize: '20px'})
+Map.add(titleLabel);
+
+
+
+
+Map.addLayer(geom,{min:0,max:1},'point',true)
+
