@@ -1,0 +1,270 @@
+///////////////////////////////
+// Land Surface Estimation (LSP) with Sentinel-2 in the Arctic (without time series smoothing)
+//
+// This is a demo code for the estimation of the start and end of season (SoS and EoS) with the threshold method without
+// time series smoothing (linear interpolation over the raw time series).
+//
+// The LSP method is the threhsold method
+//
+// Adrià Descals - a.descals@creaf.uab.cat
+// CREAF - Centre de Recerca Ecològica i Aplicacions Forestals
+
+
+Map.setOptions('satellite')
+
+var geometry = /* color: #d63000 */ee.Geometry.Point([16.4025, 66.9315])
+var point = geometry
+
+
+var threshMin = 0.4
+var scale = 50
+var year1 = 2019
+
+var startDate = '2019-05-01'
+var endDate = '2019-11-30'
+
+
+///////////////////////////////////////////
+//  Sentinel2 data.
+
+var S2 = ee.ImageCollection("COPERNICUS/S2_SR")
+  .filterDate(startDate,endDate)
+  .filterMetadata('CLOUD_COVERAGE_ASSESSMENT','less_than',70)
+  .filterMetadata('SNOW_ICE_PERCENTAGE','less_than',90);
+
+var ndviS2 = S2.map(function(im){
+    // var shadow_mask2 = im.select(['B11']).lt(1200)
+    // .or(im.select(['B4']).lt(200))
+  
+    var SCL = im.select('SCL')
+    var SCLmask = SCL.eq(1).or(SCL.eq(4)).or(SCL.eq(5)).or(SCL.eq(11))
+    var snowMask = SCL.eq(11)
+    var ndvi = im.normalizedDifference(['B8','B4']).rename('nd_S2')
+    var ndviMask = ndvi.lt(0.4)
+    
+    
+    var red = im.select('B4')
+    var green = im.select('B3')
+    var blue = im.select('B2')
+    var gcc = green.divide(green.add(red).add(blue))
+    
+    var gccMask = gcc.lt(threshMin)
+    
+    
+  return ndvi.rename('bio').where(ndviMask,threshMin) //gcc.rename('bio').where(gccMask,threshMin)
+    .where(snowMask,threshMin)
+    .addBands(im.metadata('system:time_start','date1'))
+    .updateMask(SCLmask)
+    .set('system:time_start', im.get('system:time_start'))
+});
+
+
+var chart1 = ui.Chart.image.series(ndviS2.select('bio'), point, ee.Reducer.first(), scale)
+  .setOptions({title: 'ndviS2', 
+              lineWidth: 0,
+              pointSize: 4})
+// print(chart1)
+
+
+
+
+
+
+
+//_______________________________________________________________________________________________________________________
+// SECTION 1 - 
+{
+
+var phenoPallete =['ff0000','ff8d00','fbff00','4aff00','00ffe7','01b8ff','0036ff','fb00ff']
+  
+
+var maxND = ndviS2.select('bio').max() //.reduce(ee.Reducer.percentile([98]))
+var imageVisParam = {"opacity":1,"min":0.1643226456642151,"max":0.8210719513893128,"palette":["ff9900","fbff00","91ff00","00bc20"]};
+Map.addLayer(maxND,imageVisParam,'maxND',false)
+
+// 
+var imageVisParam = {"opacity":1,"min":0.1643226456642151,"max":0.8210719513893128,"palette":["ff9900","fbff00","91ff00","00bc20"]};
+//var minND = ndviS2.select('bio').reduce(ee.Reducer.percentile([2]))
+var minND = ee.Image(threshMin)
+// var minND = ndviS2.select('bio').min()
+
+
+
+// Map.addLayer(minND,imageVisParam,'minND',false)
+
+var amplitude = maxND.subtract(minND).rename('amplitude')
+var imageVisParam = {"opacity":1,"bands":["amplitude"],"min":0.25,"max":0.8,"palette":["ff9900","fbff00","91ff00","00bc20"]};
+// Map.addLayer(amplitude,imageVisParam,'amplitude',false)
+ 
+// var countND = ndviS2.select('bio').reduce(ee.Reducer.count())
+// var imageVisParam = {"opacity":1,"bands":["bio_count"],"min":91,"max":245,"palette":["ff9900","fbff00","91ff00","00bc20"]};
+// Map.addLayer(countND,imageVisParam,'countND',false)
+
+
+
+// embed date
+var year = 2019
+var init = ee.Image(ee.Date((year-1)+'-12-31').millis());
+
+
+var chart1 = ui.Chart.image.series(ndviS2.select('bio'), point, ee.Reducer.first(), scale)
+  .setOptions({title: 'titleGraph', 
+               lineWidth: 0,
+               pointSize: 4})
+// print(chart1)
+
+
+/////////
+// // EoT
+// var EoT = ndviS2c.reduce(ee.Reducer.firstNonNull()).select('date1_first').rename('EoT')
+// var EoT_doy = EoT.subtract(init).divide(86400000)  ;
+// Map.addLayer(EoT_doy,{min:122,max:200,palette:phenoPallete},'EoT',false)
+
+/////////////////////
+// Treshold collection
+var th = 0.5
+var thresh = amplitude.multiply(th).add(minND).rename('bio')
+var col_aboveThresh = ndviS2.map(function(im){
+    var out = im.select('bio').gte(thresh);
+  return im.updateMask(out).copyProperties(im,['system:time_start'])
+})
+
+/////////
+// SoS
+// SoS1
+var SoS_bio1 = col_aboveThresh.reduce(ee.Reducer.firstNonNull()).select('bio_first').rename('SoS_bio1')
+var SoS1 = col_aboveThresh.reduce(ee.Reducer.firstNonNull()).select('date1_first').rename('SoS1')//.metadata('system:time_start','date1');
+var SoS_doy1 = SoS1.subtract(init).divide(86400000);
+Map.addLayer(SoS_doy1,{min:122,max:200,palette:phenoPallete},'SoS1',false)
+
+// SoS0
+var col_beforeSoS = ndviS2.map(function(im){
+    var out = im.select('date1').lt(SoS1.subtract(86400000/2));
+  return im.updateMask(out).copyProperties(im,['system:time_start'])
+})
+
+var SoS_bio0 = col_beforeSoS.reduce(ee.Reducer.lastNonNull()).select('bio_last').rename('SoS_bio0')
+var SoS0 = col_beforeSoS.reduce(ee.Reducer.lastNonNull()).select('date1_last').rename('SoS0')//.metadata('system:time_start','date1');
+var SoS_doy0 = SoS0.subtract(init).divide(86400000);
+Map.addLayer(SoS_doy0,{min:122,max:200,palette:phenoPallete},'SoS0',false)
+
+var diffSoS = SoS_doy1.subtract(SoS_doy0).rename('diffSoS')
+Map.addLayer(diffSoS.unmask(200),{min:1,max:10},'diffSoS',false)
+
+Map.addLayer(SoS_doy1.updateMask(diffSoS.lte(5)),{min:122,max:200,palette:phenoPallete},'SoS1_masked',false)
+
+
+// EoS
+// EoS1
+var EoS_bio1 = col_aboveThresh.reduce(ee.Reducer.lastNonNull()).select('bio_last').rename('EoS_bio1')
+var EoS1 = col_aboveThresh.reduce(ee.Reducer.lastNonNull()).select('date1_last').rename('EoS1')//.metadata('system:time_start','date1');
+var EoS_doy1 = EoS1.subtract(init).divide(86400000);
+Map.addLayer(EoS_doy1,{min:180,max:260,palette:phenoPallete},'EoS1',false)
+
+// EoS0
+var col_afterEoS = ndviS2.map(function(im){
+    var out = im.select('date1').gt(EoS1.add(86400000/2));
+  return im.updateMask(out).copyProperties(im,['system:time_start'])
+})
+
+var EoS_bio0 = col_afterEoS.reduce(ee.Reducer.firstNonNull()).select('bio_first').rename('EoS_bio0')
+var EoS0 = col_afterEoS.reduce(ee.Reducer.firstNonNull()).select('date1_first').rename('EoS0')//.metadata('system:time_start','date1');
+var EoS_doy0 = EoS0.subtract(init).divide(86400000);
+Map.addLayer(EoS_doy0,{min:180,max:260,palette:phenoPallete},'EoS0',false)
+
+var diffEoS = EoS_doy0.subtract(EoS_doy1).rename('diffEoS')
+Map.addLayer(diffEoS,{min:1,max:10},'diffEoS',false)
+
+Map.addLayer(EoS_doy1.updateMask(diffEoS.lte(5)),{min:180,max:260,palette:phenoPallete},'EoS1_masked',false)
+
+
+// SoS interp
+var SoS_doy_interp = ((thresh.subtract(SoS_bio0)).multiply(SoS_doy1.subtract(SoS_doy0))
+  .divide((SoS_bio1.subtract(SoS_bio0)))).add(SoS_doy0).rename('SoS_doy_interp')
+
+// EoS interp
+var EoS_doy_interp = ((thresh.subtract(EoS_bio1)).multiply(EoS_doy0.subtract(EoS_doy1))
+  .divide((EoS_bio0.subtract(EoS_bio1)))).add(EoS_doy1).rename('EoS_doy_interp')
+
+
+var visSoS = {min:122,max:200,palette:phenoPallete}
+var visEoS = {min:180,max:300,palette:phenoPallete}
+Map.addLayer(SoS_doy_interp,visSoS,'SoS_doy_interp',true)
+Map.addLayer(EoS_doy_interp,visEoS,'EoS_doy_interp',false)
+
+
+}
+
+
+
+
+
+
+
+
+
+//_______________________________________________________________________________________________________________________
+// SECTION   - Display legends
+
+function ColorBar() {
+  return ui.Thumbnail({
+    image: ee.Image.pixelLonLat().select(0),
+    params: {
+      bbox: [0, 0, 1, 0.1],
+      dimensions: '100x10',
+      format: 'png',
+      min: 0,
+      max: 1,
+      palette: phenoPallete,
+    },
+    style: {stretch: 'horizontal', margin: '0px 8px'},
+  });
+}
+
+function makeLegend(a,b) {
+  var labelPanel = ui.Panel(
+      [
+        ui.Label(a, {margin: '4px 8px'}),
+        ui.Label(' ',{margin: '4px 8px', textAlign: 'center', stretch: 'horizontal'}),
+        ui.Label(b, {margin: '4px 8px'})
+      ],
+      ui.Panel.Layout.flow('horizontal'));
+  return ui.Panel([ColorBar(), labelPanel]);
+}
+
+var LEGEND_TITLE_STYLE = {
+  fontSize: '20px',
+  fontWeight: 'bold',
+  stretch: 'horizontal',
+  textAlign: 'center',
+  margin: '4px',
+};
+
+var LEGEND_FOOTNOTE_STYLE = {
+  fontSize: '14px',
+  stretch: 'horizontal',
+  textAlign: 'center',
+  margin: '4px',
+};
+
+Map.add(ui.Panel(
+    [
+      ui.Label('End of Season', LEGEND_TITLE_STYLE), makeLegend(visEoS['min'],visEoS['max']),
+      ui.Label('(Day of Year)', LEGEND_FOOTNOTE_STYLE)
+    ],
+    ui.Panel.Layout.flow('vertical'),
+    {width: '230px', position: 'bottom-left'}));
+    
+Map.add(ui.Panel(
+    [
+      ui.Label('Start of Season', LEGEND_TITLE_STYLE), makeLegend(visSoS['min'],visSoS['max']),
+      ui.Label('(Day of Year)', LEGEND_FOOTNOTE_STYLE)
+    ],
+    ui.Panel.Layout.flow('vertical'),
+    {width: '230px', position: 'bottom-left'}));
+
+var titleLabel = ui.Label(
+    'SoS and EoS Sentinel-2 (2019) // Threshold method without time series smoothing', {fontWeight: 'bold', fontSize: '20px'})
+Map.add(titleLabel);
+
+ 
