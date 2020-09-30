@@ -1,4 +1,4 @@
-# Land Surface Phenology with Sentinel2
+# Land Surface Phenology with Sentinel-2
 
 
 This repository contains the Google Earth Engine code that was developed for the estimation of Land Surface Phenology (LSP) metrics (start and end of season (SoS and EoS)) with Sentinel-2 at high latitudes. 
