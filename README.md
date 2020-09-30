@@ -1,1 +1,16 @@
-# LandSurfacePhenology_Sentinel2
+# Land Surface Phenology with Sentinel2
+
+
+This repository contains the Google Earth Engine code that was developed for the estimation of Land Surface Phenology (LSP) metrics (start and end of season (SoS and EoS)) with Sentinel-2 at high latitudes. 
+
+The LSP extraction method is the threshold method.
+
+The repository contains the following files:
+
+- Estimation of SoS and EoS with time series smoothing (20-day composition and cubic interpolation)
+  https://code.earthengine.google.com/c60b360731a4cb40bffa539614654da7
+  
+- Estimation of SoS and EoS without time series smoothing (linear interpolation over the raw time series)
+  https://code.earthengine.google.com/33cff0efe4297b59c7c2165c57b05f21 
+  
+Adrià Descals - a.descals@creaf.uab.cat / CREAF - Centre de Recerca Ecològica i Aplicacions Forestals
