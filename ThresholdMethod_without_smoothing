@@ -10,19 +10,33 @@
 // CREAF - Centre de Recerca Ecològica i Aplicacions Forestals
 
 
+var textSections = '' +
+  "\n SECTION 1 - Define parameters and setup " +
+  "\n SECTION 2 - Prepare Sentinel-2 data  " +
+  "\n SECTION 3 - Find values before and after threshold " +
+  "\n SECTION 4 - Linear interpolation  " +
+  "\n SECTION 5 - Display legends  " 
+print(textSections)
+
+
+//_______________________________________________________________________________________________________________________
+// SECTION 1 - Define parameters and setup
+
 Map.setOptions('satellite')
 
-var geometry = /* color: #d63000 */ee.Geometry.Point([16.4025, 66.9315])
-var point = geometry
+var geom = /* color: #ff0000 */ee.Geometry.Point([17.569432548114516, 67.81358919662131]);
+var point = geom // inspect results for this location
 
+var th = 0.5 // Define the percentage of amplitude for the estimation of the threshold 
+var threshMin = 0.4 // minimum NDVI value for the reclassification of snow values
+var scale = 50 // scale of the analysis
+var year1 = 2019 // year of processing
 
-var threshMin = 0.4
-var scale = 50
-var year1 = 2019
+var startDate = year1+'-04-15'
+var endDate = year1+'-12-20'
 
-var startDate = '2019-05-01'
-var endDate = '2019-11-30'
-
+//_______________________________________________________________________________________________________________________
+// SECTION 2 - Prepare Sentinel-2 data 
 
 ///////////////////////////////////////////
 //  Sentinel2 data.
@@ -42,15 +56,7 @@ var ndviS2 = S2.map(function(im){
     var ndvi = im.normalizedDifference(['B8','B4']).rename('nd_S2')
     var ndviMask = ndvi.lt(0.4)
     
-    
-    var red = im.select('B4')
-    var green = im.select('B3')
-    var blue = im.select('B2')
-    var gcc = green.divide(green.add(red).add(blue))
-    
-    var gccMask = gcc.lt(threshMin)
-    
-    
+
   return ndvi.rename('bio').where(ndviMask,threshMin) //gcc.rename('bio').where(gccMask,threshMin)
     .where(snowMask,threshMin)
     .addBands(im.metadata('system:time_start','date1'))
@@ -67,77 +73,29 @@ var chart1 = ui.Chart.image.series(ndviS2.select('bio'), point, ee.Reducer.first
 
 
 
-
-
-
-
 //_______________________________________________________________________________________________________________________
-// SECTION 1 - 
-{
+// SECTION 3 - FIND VALUES BEFORE AND AFTER THRESHOLD
 
-var phenoPallete =['ff0000','ff8d00','fbff00','4aff00','00ffe7','01b8ff','0036ff','fb00ff']
-  
-
-var maxND = ndviS2.select('bio').max() //.reduce(ee.Reducer.percentile([98]))
-var imageVisParam = {"opacity":1,"min":0.1643226456642151,"max":0.8210719513893128,"palette":["ff9900","fbff00","91ff00","00bc20"]};
-Map.addLayer(maxND,imageVisParam,'maxND',false)
-
-// 
-var imageVisParam = {"opacity":1,"min":0.1643226456642151,"max":0.8210719513893128,"palette":["ff9900","fbff00","91ff00","00bc20"]};
-//var minND = ndviS2.select('bio').reduce(ee.Reducer.percentile([2]))
+// Estimate threshold
+var maxND = ndviS2.select('bio').max()
 var minND = ee.Image(threshMin)
-// var minND = ndviS2.select('bio').min()
-
-
-
-// Map.addLayer(minND,imageVisParam,'minND',false)
-
 var amplitude = maxND.subtract(minND).rename('amplitude')
-var imageVisParam = {"opacity":1,"bands":["amplitude"],"min":0.25,"max":0.8,"palette":["ff9900","fbff00","91ff00","00bc20"]};
-// Map.addLayer(amplitude,imageVisParam,'amplitude',false)
- 
-// var countND = ndviS2.select('bio').reduce(ee.Reducer.count())
-// var imageVisParam = {"opacity":1,"bands":["bio_count"],"min":91,"max":245,"palette":["ff9900","fbff00","91ff00","00bc20"]};
-// Map.addLayer(countND,imageVisParam,'countND',false)
+var thresh = amplitude.multiply(th).add(minND).rename('bio')
 
-
-
-// embed date
-var year = 2019
-var init = ee.Image(ee.Date((year-1)+'-12-31').millis());
-
-
-var chart1 = ui.Chart.image.series(ndviS2.select('bio'), point, ee.Reducer.first(), scale)
-  .setOptions({title: 'titleGraph', 
-               lineWidth: 0,
-               pointSize: 4})
-// print(chart1)
-
+var init = ee.Image(ee.Date((year1-1)+'-12-31').millis());
 
 /////////
-// // EoT
-// var EoT = ndviS2c.reduce(ee.Reducer.firstNonNull()).select('date1_first').rename('EoT')
-// var EoT_doy = EoT.subtract(init).divide(86400000)  ;
-// Map.addLayer(EoT_doy,{min:122,max:200,palette:phenoPallete},'EoT',false)
-
-/////////////////////
-// Treshold collection
-var th = 0.5
-var thresh = amplitude.multiply(th).add(minND).rename('bio')
+// SoS1 - observation after threshold
 var col_aboveThresh = ndviS2.map(function(im){
     var out = im.select('bio').gte(thresh);
   return im.updateMask(out).copyProperties(im,['system:time_start'])
 })
 
-/////////
-// SoS
-// SoS1
 var SoS_bio1 = col_aboveThresh.reduce(ee.Reducer.firstNonNull()).select('bio_first').rename('SoS_bio1')
 var SoS1 = col_aboveThresh.reduce(ee.Reducer.firstNonNull()).select('date1_first').rename('SoS1')//.metadata('system:time_start','date1');
 var SoS_doy1 = SoS1.subtract(init).divide(86400000);
-Map.addLayer(SoS_doy1,{min:122,max:200,palette:phenoPallete},'SoS1',false)
 
-// SoS0
+// SoS0 - observation before threshold
 var col_beforeSoS = ndviS2.map(function(im){
     var out = im.select('date1').lt(SoS1.subtract(86400000/2));
   return im.updateMask(out).copyProperties(im,['system:time_start'])
@@ -146,22 +104,17 @@ var col_beforeSoS = ndviS2.map(function(im){
 var SoS_bio0 = col_beforeSoS.reduce(ee.Reducer.lastNonNull()).select('bio_last').rename('SoS_bio0')
 var SoS0 = col_beforeSoS.reduce(ee.Reducer.lastNonNull()).select('date1_last').rename('SoS0')//.metadata('system:time_start','date1');
 var SoS_doy0 = SoS0.subtract(init).divide(86400000);
-Map.addLayer(SoS_doy0,{min:122,max:200,palette:phenoPallete},'SoS0',false)
 
 var diffSoS = SoS_doy1.subtract(SoS_doy0).rename('diffSoS')
-Map.addLayer(diffSoS.unmask(200),{min:1,max:10},'diffSoS',false)
-
-Map.addLayer(SoS_doy1.updateMask(diffSoS.lte(5)),{min:122,max:200,palette:phenoPallete},'SoS1_masked',false)
 
 
-// EoS
-// EoS1
+/////////
+// EoS1 - observation after threshold
 var EoS_bio1 = col_aboveThresh.reduce(ee.Reducer.lastNonNull()).select('bio_last').rename('EoS_bio1')
 var EoS1 = col_aboveThresh.reduce(ee.Reducer.lastNonNull()).select('date1_last').rename('EoS1')//.metadata('system:time_start','date1');
 var EoS_doy1 = EoS1.subtract(init).divide(86400000);
-Map.addLayer(EoS_doy1,{min:180,max:260,palette:phenoPallete},'EoS1',false)
 
-// EoS0
+// EoS0 - observation before threshold
 var col_afterEoS = ndviS2.map(function(im){
     var out = im.select('date1').gt(EoS1.add(86400000/2));
   return im.updateMask(out).copyProperties(im,['system:time_start'])
@@ -170,13 +123,12 @@ var col_afterEoS = ndviS2.map(function(im){
 var EoS_bio0 = col_afterEoS.reduce(ee.Reducer.firstNonNull()).select('bio_first').rename('EoS_bio0')
 var EoS0 = col_afterEoS.reduce(ee.Reducer.firstNonNull()).select('date1_first').rename('EoS0')//.metadata('system:time_start','date1');
 var EoS_doy0 = EoS0.subtract(init).divide(86400000);
-Map.addLayer(EoS_doy0,{min:180,max:260,palette:phenoPallete},'EoS0',false)
 
 var diffEoS = EoS_doy0.subtract(EoS_doy1).rename('diffEoS')
-Map.addLayer(diffEoS,{min:1,max:10},'diffEoS',false)
 
-Map.addLayer(EoS_doy1.updateMask(diffEoS.lte(5)),{min:180,max:260,palette:phenoPallete},'EoS1_masked',false)
 
+//_______________________________________________________________________________________________________________________
+// SECTION 4 - LINEAR INTERPOLATION
 
 // SoS interp
 var SoS_doy_interp = ((thresh.subtract(SoS_bio0)).multiply(SoS_doy1.subtract(SoS_doy0))
@@ -187,24 +139,15 @@ var EoS_doy_interp = ((thresh.subtract(EoS_bio1)).multiply(EoS_doy0.subtract(EoS
   .divide((EoS_bio0.subtract(EoS_bio1)))).add(EoS_doy1).rename('EoS_doy_interp')
 
 
-var visSoS = {min:122,max:200,palette:phenoPallete}
-var visEoS = {min:180,max:300,palette:phenoPallete}
+var phenoPalette = ['ff0000','ff8d00','fbff00','4aff00','00ffe7','01b8ff','0036ff','fb00ff']
+var visSoS = {min:122,max:200,palette:phenoPalette}
+var visEoS = {min:180,max:300,palette:phenoPalette}
 Map.addLayer(SoS_doy_interp,visSoS,'SoS_doy_interp',true)
 Map.addLayer(EoS_doy_interp,visEoS,'EoS_doy_interp',false)
 
 
-}
-
-
-
-
-
-
-
-
-
 //_______________________________________________________________________________________________________________________
-// SECTION   - Display legends
+// SECTION 5  - Display legends
 
 function ColorBar() {
   return ui.Thumbnail({
@@ -215,7 +158,7 @@ function ColorBar() {
       format: 'png',
       min: 0,
       max: 1,
-      palette: phenoPallete,
+      palette: phenoPalette,
     },
     style: {stretch: 'horizontal', margin: '0px 8px'},
   });
@@ -267,4 +210,4 @@ var titleLabel = ui.Label(
     'SoS and EoS Sentinel-2 (2019) // Threshold method without time series smoothing', {fontWeight: 'bold', fontSize: '20px'})
 Map.add(titleLabel);
 
- 
+
