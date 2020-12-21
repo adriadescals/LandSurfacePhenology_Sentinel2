@@ -11,6 +11,6 @@ The repository contains the following files:
   https://code.earthengine.google.com/7b8201664a88b8a29ae08503a1f5bd23
   
 - Estimation of SoS and EoS without time series smoothing (linear interpolation over the raw time series)
-  https://code.earthengine.google.com/ec5822d3084767f27cd139cbc44cd998
+  https://code.earthengine.google.com/246ebbb8b98393445e5e12cd87ab524c
   
 Adrià Descals - a.descals@creaf.uab.cat / CREAF - Centre de Recerca Ecològica i Aplicacions Forestals
