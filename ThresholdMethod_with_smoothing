@@ -25,25 +25,24 @@ print(textSections)
 
 //_______________________________________________________________________________________________________________________
 // SECTION 1 - Define parameters and setup
-
-
 Map.setOptions('satellite')
 
 var geom = /* color: #ff0000 */ee.Geometry.Point([17.569432548114516, 67.81358919662131]);
 var point = geom // inspect results for this location
 var roi = point.buffer(100000).bounds() // display results around the point of interest
 
+var vegIndex = 'evi' // Specify the vegetation index (VI): 'ndvi', 'evi', 'gcc', or 'ndpi'.
 var th = 0.5 // Define the percentage of amplitude for the estimation of the threshold 
-var threshMin = 0.4 // minimum NDVI value for the reclassification of snow values
+var threshMin = 0.2 // minimum NDVI value for the reclassification of snow values
 var scale = 50 // scale of the analysis
 var year1 = 2019 // year of processing
 
 var lag = 20 // temporal resolution of the composites
 
-var bioBandName = 'bio' // name of the vegetation index
-
 var startDate = year1+'-04-15'
 var endDate = year1+'-12-20'
+
+Map.centerObject(roi,7)
 
 
 //_______________________________________________________________________________________________________________________
@@ -125,29 +124,29 @@ var S2 = S2.map(function(im){
     var SCL = im.select('SCL')
     var SCLmask = SCL.eq(1).or(SCL.eq(4)).or(SCL.eq(5)).or(SCL.eq(11)) // mask for non-valid observations
     var snowMask = SCL.eq(11) // snow mask
-    var ndvi = im.normalizedDifference(['B8','B4']).rename('nd_S2') // compute ndvi
-    var ndviMask = ndvi.lt(threshMin) 
+    
+    var blue = im.select('B2').multiply(0.0001)
+    var green = im.select('B3').multiply(0.0001)
+    var red = im.select('B4').multiply(0.0001)
+    var nir = im.select('B8').multiply(0.0001)
+    var swir = im.select('B12').multiply(0.0001)
+    
+    // Generate VIs
+    var ndvi = im.normalizedDifference(['B8','B4']).rename('ndvi')
+    var evi = (ee.Image(2.5).multiply(nir.subtract(red))).divide(nir.add(red.multiply(6)).subtract(blue.multiply(7.5)).add(1)).rename('evi')
+    var gcc = green.divide(green.add(red).add(blue)).rename('gcc')
+    var alpha = ee.Image(0.51) // alpha parameter in NDPI formula
+    var ndpi = (nir.subtract(alpha.multiply(red).add((ee.Image(1).subtract(alpha)).multiply(swir)))).divide(nir.add(alpha.multiply(red).add((ee.Image(1).subtract(alpha)).multiply(swir)))).rename('ndpi')
+    
+    // select VI of interest
+    var bio = ndvi.addBands(evi).addBands(ndpi).addBands(gcc)
+      .select(vegIndex).rename('bio') 
 
-  return ndvi.rename(bioBandName)
-    .where(ndviMask,threshMin) // force values below 0.4
-    .where(snowMask,threshMin) // reclassify snow valies to 0.4
-    // .addBands(im.metadata('system:time_start','date1')) // add time band
+  return bio.where(bio.lt(threshMin),threshMin) // force low values to threshMin 
+    .where(snowMask,threshMin) // force snow values to threshMin 
     .updateMask(SCLmask) // mask non-valid observations
     .set('system:time_start', im.get('system:time_start'))
 });
-
-// plot time Sentinel-2 time series
-var chart1 = ui.Chart.image.series(S2, point, ee.Reducer.first(), scale)
-  .setOptions({title: 'Sentinel-2 NDVI', 
-              lineWidth: 0,
-              pointSize: 4})
-
-// print(chart1)
-
-
-
-
-
 
 
 
@@ -241,7 +240,7 @@ Map.addLayer(flagNoObs.clip(roi),{min:0,max:1},'Pixels with empty composites',fa
 var interp = cubicInterpolation(colDekads,1)
 
 // Plot daily observations, composites, and interpolated values
-var chart1 = ui.Chart.image.series(S2.merge(colDekads.select(bioBandName+'_mean')).merge(interp), point, ee.Reducer.first(), 10)
+var chart1 = ui.Chart.image.series(S2.merge(colDekads.select('bio_mean')).merge(interp), point, ee.Reducer.first(), 10)
   .setOptions({
       //title: 'States with Highest Record Temperatures',
       vAxis: {
@@ -266,7 +265,7 @@ var init = ee.Image(ee.Date((year1-1)+'-12-31').millis());
 
 // add timeStamp band
 var interp = interp.map(function(im){
-  return im.rename(bioBandName+'_interp').addBands(im.metadata('system:time_start','date1'))
+  return im.rename('bio_interp').addBands(im.metadata('system:time_start','date1'))
     .set('system:time_start', im.get('system:time_start'))
 })
 
@@ -276,12 +275,12 @@ var maxND = colDekads.max()
 var amplitude = maxND.subtract(minND)
 
 // Compute threshold image
-var thresh = amplitude.multiply(th).add(minND).rename(bioBandName+'_interp')
+var thresh = amplitude.multiply(th).add(minND).rename('bio_interp')
 
 /////////
 // mask values below the threhsold
 var col_aboveThresh = interp.map(function(im){
-    var out = im.select(bioBandName+'_interp').gt(thresh);
+    var out = im.select('bio_interp').gt(thresh);
   return im.updateMask(out) // 
     .copyProperties(im,['system:time_start'])
 })
@@ -302,7 +301,7 @@ var EoS_doy = EoS.subtract(init).divide(86400000); // convert to doy
 //_______________________________________________________________________________________________________________________
 // SECTION 8 - Plot results
 
-print('Threshold:',thresh.reduceRegion(ee.Reducer.first(), point, 1).get(bioBandName+'_interp'))
+print('Threshold:',thresh.reduceRegion(ee.Reducer.first(), point, 1).get('bio_interp'))
 print('SoS',ee.Date(SoS.reduceRegion(ee.Reducer.first(), point, 1).get('SoS')))
 print('EoS',ee.Date(EoS.reduceRegion(ee.Reducer.first(), point, 1).get('EoS')))
 
@@ -314,7 +313,6 @@ Map.addLayer(EoS_doy.clip(roi),visEoS,'EoS',false)
 
 var vPoly = ee.Image().toByte().paint(roi, 2,4);    
 Map.addLayer(vPoly, {palette: '000000', max: 3, opacity: 0.9}, 'Region of interest'); 
-Map.centerObject(roi,7)
 
 
 //////////////////////////////
@@ -340,7 +338,7 @@ var lineEoS = ee.ImageCollection.fromImages([blankImage3,blankImage4])
 var resultsPanel = ui.Panel({style: {position: 'bottom-right',width: '500px'}});
 Map.add(resultsPanel);
   
-var chart1 = ui.Chart.image.series({imageCollection: S2.merge(lineEoS).merge(lineSoS).merge(interp.select(bioBandName+'_interp')),
+var chart1 = ui.Chart.image.series({imageCollection: S2.merge(lineEoS).merge(lineSoS).merge(interp.select('bio_interp')),
   region: point,
   reducer: ee.Reducer.first(), 
   scale: scale,
@@ -356,8 +354,8 @@ var chart1 = ui.Chart.image.series({imageCollection: S2.merge(lineEoS).merge(lin
       },
       vAxis: {
       viewWindow: {
-          min: 0.38,
-          max: 0.8
+          min: threshMin-0.05,
+          max: 1
       }}})
   // print(chart1)
 resultsPanel.clear().add(chart1);
@@ -424,11 +422,10 @@ Map.add(ui.Panel(
     {width: '230px', position: 'bottom-left'}));
 
 var titleLabel = ui.Label(
-    'SoS and EoS Sentinel-2 (2019) // Threshold method with time series smoothing', {fontWeight: 'bold', fontSize: '20px'})
+    'SoS and EoS Sentinel-2 ('+year1+') // Threshold method with time series smoothing', {fontWeight: 'bold', fontSize: '20px'})
 Map.add(titleLabel);
 
 
 
 
 Map.addLayer(geom,{min:0,max:1},'point',true)
-
