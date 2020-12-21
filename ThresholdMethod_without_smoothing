@@ -54,7 +54,7 @@ var ndviS2 = S2.map(function(im){
     var SCLmask = SCL.eq(1).or(SCL.eq(4)).or(SCL.eq(5)).or(SCL.eq(11))
     var snowMask = SCL.eq(11)
     var ndvi = im.normalizedDifference(['B8','B4']).rename('nd_S2')
-    var ndviMask = ndvi.lt(0.4)
+    var ndviMask = ndvi.lt(threshMin)
     
 
   return ndvi.rename('bio').where(ndviMask,threshMin) //gcc.rename('bio').where(gccMask,threshMin)
