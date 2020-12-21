@@ -27,7 +27,7 @@ print(textSections)
 // SECTION 1 - Define parameters and setup
 Map.setOptions('satellite')
 
-var geom = /* color: #ff0000 */ee.Geometry.Point([17.569432548114516, 67.81358919662131]);
+var geom = /* color: #ff0000 */ee.Geometry.Point([17.07398, 67.7578]);
 var point = geom // inspect results for this location
 var roi = point.buffer(100000).bounds() // display results around the point of interest
 
