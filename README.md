@@ -8,7 +8,7 @@ The LSP extraction method is the threshold method.
 The repository contains the following files:
 
 - Estimation of SoS and EoS with time series smoothing (20-day composition and cubic interpolation)
-  https://code.earthengine.google.com/c60b360731a4cb40bffa539614654da7
+  https://code.earthengine.google.com/d9feace23f3337cff736c1122e1eeee3
   
 - Estimation of SoS and EoS without time series smoothing (linear interpolation over the raw time series)
   https://code.earthengine.google.com/ec5822d3084767f27cd139cbc44cd998
