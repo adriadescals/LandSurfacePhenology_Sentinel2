@@ -199,7 +199,7 @@ var chart1 = ui.Chart.image.series({imageCollection: VI_S2.select('bio').merge(l
   scale: 10,
   // xProperty: 'doy'
 })
-.setOptions({title: 'Sentinel-2 NDVI', 
+.setOptions({title: 'Sentinel-2 '+vegIndex, 
       interpolateNulls: true,
       series: {
         0: {pointSize: 0, lineWidth: 3, color: '2800ff'}, // EoS
