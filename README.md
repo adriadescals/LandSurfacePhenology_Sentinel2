@@ -14,3 +14,5 @@ The repository contains the following files:
   https://code.earthengine.google.com/246ebbb8b98393445e5e12cd87ab524c
   
 Adrià Descals - a.descals@creaf.uab.cat / CREAF - Centre de Recerca Ecològica i Aplicacions Forestals
+
+Descals, A., Verger, A., Yin, G., & Peñuelas, J. (2020). Improved estimates of arctic land surface phenology using Sentinel-2 time series. Remote Sensing, 12(22), 3738.
