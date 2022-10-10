@@ -15,5 +15,6 @@ The repository contains the following files:
   
 Adrià Descals - a.descals@creaf.uab.cat / CREAF - Centre de Recerca Ecològica i Aplicacions Forestals
 
-REFERENCE PAPER
+
+REFERENCE PAPER <br />
 Descals, A., Verger, A., Yin, G., & Peñuelas, J. (2020). Improved estimates of arctic land surface phenology using Sentinel-2 time series. Remote Sensing, 12(22), 3738.
